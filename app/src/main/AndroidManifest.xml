@@ -33,7 +33,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".RimetActivity"></activity>
+        <activity
+            android:name=".RimetActivity"
+            android:theme="@style/AppTheme.NoActionBar" />
 
         <provider
             android:name=".storage.SharedFileProvider"

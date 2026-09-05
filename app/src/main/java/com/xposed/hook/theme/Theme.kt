@@ -1,51 +1,62 @@
 package com.xposed.hook.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material.ContentAlpha
+import androidx.compose.material.LocalContentAlpha
+import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.ProvideTextStyle
 import androidx.compose.material.darkColors
 import androidx.compose.material.lightColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 
-/**
- * Created by lin on 2021/6/5.
- */
-
 private val LightThemeColors = lightColors(
-    primary = pink500,
-    primaryVariant = pink600,
-    onPrimary = Color.Black,
-    secondary = pink500,
-    secondaryVariant = pink600,
-    onSecondary = Color.Black
+    primary = TealPrimary,
+    primaryVariant = TealDark,
+    secondary = TealPrimary,
+    secondaryVariant = TealDark,
+    background = CanvasLight,
+    surface = SurfaceLight,
+    onPrimary = Color.White,
+    onSecondary = Color.White,
+    onBackground = Ink,
+    onSurface = Ink
 )
 
 private val DarkThemeColors = darkColors(
-    primary = pink200,
-    secondary = pink200,
-    surface = pinkDarkPrimary
+    primary = TealLight,
+    primaryVariant = TealPrimary,
+    secondary = TealLight,
+    background = CanvasDark,
+    surface = SurfaceDark,
+    onPrimary = Color(0xff073b36),
+    onSecondary = Color(0xff073b36),
+    onBackground = Color(0xffe5eeec),
+    onSurface = Color(0xffe5eeec)
 )
 
-private val LightTextStyle = TextStyle(
-    color = Color(0xff333333)
-)
+private val LightTextStyle = TextStyle(color = Ink)
 
-private val DarkTextStyle = TextStyle(
-    color = Color.White
-)
+private val DarkTextStyle = TextStyle(color = Color(0xffe5eeec))
 
 @Composable
 fun AppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    ProvideTextStyle(if (darkTheme) DarkTextStyle else LightTextStyle) {
-        MaterialTheme(
-            colors = if (darkTheme) DarkThemeColors else LightThemeColors,
-            content = content
-        )
+    val colors = if (darkTheme) DarkThemeColors else LightThemeColors
+    MaterialTheme(colors = colors) {
+        CompositionLocalProvider(
+            LocalContentColor provides colors.onSurface,
+            LocalContentAlpha provides ContentAlpha.high
+        ) {
+            ProvideTextStyle(
+                value = if (darkTheme) DarkTextStyle else LightTextStyle,
+                content = content
+            )
+        }
     }
 }
-

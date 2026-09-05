@@ -1,17 +1,29 @@
 <resources>
-    <string name="app_name">XposedHook</string>
+    <string name="app_name">FakeLocation</string>
 
     <string name="search_app">搜索应用</string>
+    <string name="back">返回</string>
     <string name="show_system_apps">显示系统应用</string>
+    <string name="show_system_apps_hint">包含预装应用</string>
+    <string name="app_list_title">应用列表（%1$d）</string>
 
     <string name="gps_location">GPS定位</string>
     <string name="cell_location">基站定位（选填）</string>
+    <string name="current_gps_info">当前位置GPS信息</string>
+    <string name="current_cell_info">当前位置基站信息</string>
+    <string name="current_value">当前值</string>
+    <string name="pending_value">待保存</string>
+    <string name="latitude_label">纬度</string>
+    <string name="longitude_label">经度</string>
+    <string name="area_code_label">区域码</string>
+    <string name="cell_identity_label">小区标识</string>
     <string name="current_lac">当前位置基站 Area Code:%1$s</string>
     <string name="current_cid">当前位置基站 Cell Identity:%1$s</string>
     <string name="current_latitude">当前位置GPS信息 Latitude:%1$s</string>
     <string name="current_longitude">当前位置GPS信息 Longitude:%1$s</string>
     <string name="auto_fill">自动填入当前位置</string>
     <string name="open_location_hook">开启定位修改</string>
+    <string name="open_location_hook_hint">将此位置应用到选中的应用</string>
     <string name="save">保存</string>
     <string name="save_success">保存成功</string>
     <string name="reboot_app">重启App</string>
