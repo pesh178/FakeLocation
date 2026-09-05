@@ -20,8 +20,9 @@
             android:name="xposeddescription"
             android:value="FakeLocation" />
         <meta-data
-            android:name="xposedminversion"
-            android:value="93" />
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
+
 
         <activity
             android:name=".MainActivity"
@@ -33,7 +34,6 @@
             </intent-filter>
         </activity>
         <activity android:name=".RimetActivity"></activity>
-        <activity android:name=".LuckMoneySetting"></activity>
 
         <provider
             android:name=".storage.SharedFileProvider"

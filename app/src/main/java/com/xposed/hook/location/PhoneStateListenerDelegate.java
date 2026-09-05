@@ -5,14 +5,15 @@ import android.telephony.PhoneStateListener;
 import android.telephony.gsm.GsmCellLocation;
 import android.util.Log;
 
+import com.xposed.hook.core.HookUtils;
+
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.libxposed.api.XposedInterface.Chain;
+import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Created by lin on 2018/1/25.
@@ -27,15 +28,16 @@ public class PhoneStateListenerDelegate {
     public static void hookPhoneStateListener(int lac, int cid) {
         try {
             Constructor<PhoneStateListener> constructor = PhoneStateListener.class.getConstructor();
-            XposedBridge.hookMethod(constructor, new XC_MethodHook() {
+            HookUtils.hookConstructor(constructor, new Hooker() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    Class<?> clazz = param.thisObject.getClass();
+                public Object intercept(Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    Class<?> clazz = chain.getThisObject().getClass();
                     while (clazz != null && clazz != PhoneStateListener.class) {
                         if (hookedClass.contains(clazz.getName()))
                             break;
                         try {
-                            Method method = XposedHelpers.findMethodExact(clazz, "onCellLocationChanged", CellLocation.class);
+                            Method method = HookUtils.findMethodExact(clazz, "onCellLocationChanged", CellLocation.class);
                             hookPhoneStateListener(method, lac, cid);
                             hookedClass.add(clazz.getName());
                             break;
@@ -44,6 +46,7 @@ public class PhoneStateListenerDelegate {
                         }
                         clazz = clazz.getSuperclass();
                     }
+                    return result;
                 }
             });
         } catch (Throwable e) {
@@ -53,13 +56,15 @@ public class PhoneStateListenerDelegate {
 
     private static void hookPhoneStateListener(Method method, int lac, int cid) {
         try {
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            HookUtils.hookMethod(method, new Hooker() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args[0] instanceof GsmCellLocation) {
+                public Object intercept(Chain chain) throws Throwable {
+                    Object[] args = HookUtils.argsOf(chain);
+                    if (args[0] instanceof GsmCellLocation) {
                         Log.i(TAG, "hooking onCellLocationChanged");
-                        ((GsmCellLocation) param.args[0]).setLacAndCid(lac, cid);
+                        ((GsmCellLocation) args[0]).setLacAndCid(lac, cid);
                     }
+                    return chain.proceed(args);
                 }
             });
         } catch (Throwable e) {

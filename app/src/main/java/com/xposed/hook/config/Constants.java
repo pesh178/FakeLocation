@@ -3,6 +3,7 @@ package com.xposed.hook.config;
 public class Constants {
 
     public static final String PREF_FILE_NAME = "location";
+    public static final String SHOW_SYSTEM_APPS = "show_system_apps";
 
     public static final String DEFAULT_LATITUDE = "34.752600";
     public static final String DEFAULT_LONGITUDE = "113.662000";

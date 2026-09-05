@@ -1,6 +1,7 @@
 package com.xposed.hook
 
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
@@ -12,8 +13,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,9 +26,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.xposed.hook.entity.AppInfo
 import com.xposed.hook.extension.dpInPx
+import com.xposed.hook.config.Constants
 import com.xposed.hook.extension.toBitmap
 import com.xposed.hook.theme.AppTheme
 import com.xposed.hook.utils.AppHelper
+import com.xposed.hook.utils.SharedPreferencesHelper
 import kotlinx.coroutines.launch
 
 /**
@@ -38,10 +39,16 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private var appList by mutableStateOf(emptyList<AppInfo>())
+    private lateinit var preferences: SharedPreferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        preferences = getSharedPreferences(Constants.PREF_FILE_NAME, MODE_PRIVATE)
         setContent { AppScaffold(appList) }
+    }
+
+    override fun onResume() {
+        super.onResume()
         lifecycleScope.launch {
             appList = AppHelper.getAppList()
         }
@@ -49,15 +56,40 @@ class MainActivity : AppCompatActivity() {
 
     @Composable
     fun AppScaffold(list: List<AppInfo>) {
+        var showSystemApps by remember {
+            mutableStateOf(preferences.getBoolean(Constants.SHOW_SYSTEM_APPS, false))
+        }
         AppTheme {
             Column {
                 var textState by remember { mutableStateOf(TextFieldValue()) }
-                UserInputText(onTextChanged = {
-                    textState = it
-                }, textFieldValue = textState)
-                AppList(if (textState.text.isNotEmpty()) list.filter { info ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    UserInputText(
+                        onTextChanged = { textState = it },
+                        textFieldValue = textState,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = stringResource(R.string.show_system_apps),
+                        fontSize = 12.sp
+                    )
+                    Switch(
+                        checked = showSystemApps,
+                        onCheckedChange = { enabled ->
+                            showSystemApps = enabled
+                            preferences.edit().putBoolean(Constants.SHOW_SYSTEM_APPS, enabled).commit()
+                            SharedPreferencesHelper.makeWorldReadable(preferences)
+                        }
+                    )
+                }
+                val visibleList = if (showSystemApps) list else list.filterNot { it.isSystem }
+                AppList(if (textState.text.isNotEmpty()) visibleList.filter { info ->
                     info.title.contains(textState.text, true)
-                } else list)
+                } else visibleList)
             }
         }
     }
@@ -65,7 +97,7 @@ class MainActivity : AppCompatActivity() {
     @Composable
     fun AppList(list: List<AppInfo>) {
         LazyColumn {
-            items(list) { item ->
+            items(list, key = { it.packageName }) { item ->
                 AppItem(item)
             }
         }
@@ -73,6 +105,9 @@ class MainActivity : AppCompatActivity() {
 
     @Composable
     fun AppItem(item: AppInfo) {
+        var isHookEnabled by remember(item.packageName, item.enabled) {
+            mutableStateOf(item.enabled)
+        }
         Row(
             Modifier
                 .fillMaxWidth()
@@ -82,10 +117,22 @@ class MainActivity : AppCompatActivity() {
                 .padding(12.dp, 12.dp), verticalAlignment = Alignment.CenterVertically
         ) {
             Image(item.icon.toBitmap(36.dpInPx, 36.dpInPx), item.title)
-            Column(Modifier.padding(10.dp, 0.dp)) {
+            Column(Modifier.padding(10.dp, 0.dp).weight(1f)) {
                 Text(item.title)
                 Text(item.packageName, Modifier.padding(0.dp, 3.dp, 0.dp, 0.dp), fontSize = 12.sp)
             }
+            Switch(
+                checked = isHookEnabled,
+                onCheckedChange = { enabled ->
+                    isHookEnabled = enabled
+                    item.enabled = enabled
+                    preferences.edit().putBoolean(item.packageName, enabled).commit()
+                    SharedPreferencesHelper.makeWorldReadable(preferences)
+                    lifecycleScope.launch {
+                        appList = AppHelper.getAppList()
+                    }
+                }
+            )
         }
     }
 
@@ -93,9 +140,10 @@ class MainActivity : AppCompatActivity() {
     private fun UserInputText(
         keyboardType: KeyboardType = KeyboardType.Text,
         onTextChanged: (TextFieldValue) -> Unit,
-        textFieldValue: TextFieldValue
+        textFieldValue: TextFieldValue,
+        modifier: Modifier = Modifier
     ) {
-        Surface {
+        Surface(modifier = modifier) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -135,16 +183,6 @@ class MainActivity : AppCompatActivity() {
                             style = MaterialTheme.typography.body1.copy(color = disableContentColor)
                         )
                     }
-                }
-                IconButton(onClick = {
-                    startActivity(
-                        Intent(this@MainActivity, LuckMoneySetting::class.java)
-                    )
-                }) {
-                    Icon(
-                        Icons.Filled.MoreVert,
-                        contentDescription = stringResource(R.string.wechat_hook)
-                    )
                 }
             }
         }

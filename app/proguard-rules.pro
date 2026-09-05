@@ -28,3 +28,6 @@
 -keep class com.xposed.hook.Main {*;}
 -keep class com.xposed.hook.location.** {*;}
 -keep class androidx.core.content.FileProvider {*;}
+
+# libxposed API 102 引用 Java 16 record，Android 运行时无 java.lang.Record
+-dontwarn java.lang.Record

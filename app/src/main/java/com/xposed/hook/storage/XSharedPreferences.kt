@@ -1,19 +1,22 @@
 package com.xposed.hook.storage
 
-import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.util.Log
-import de.robv.android.xposed.XposedHelpers
+import com.xposed.hook.core.HookUtils
+import com.xposed.hook.core.ProcessContext
 import org.xmlpull.v1.XmlPullParserException
-import java.io.FileInputStream
 import java.io.FileNotFoundException
 import kotlin.concurrent.thread
 
 /**
  * Created by lin on 2021/8/21.
  */
-class XSharedPreferences(packageName: String, prefFileName: String) : SharedPreferences {
+class XSharedPreferences(
+    packageName: String,
+    prefFileName: String
+) : SharedPreferences {
 
     private val TAG = "XSharedPreferences"
     private val lock = Object()
@@ -42,10 +45,10 @@ class XSharedPreferences(packageName: String, prefFileName: String) : SharedPref
     }
 
     override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? {
-        synchronized(this) {
+        synchronized(lock) {
             awaitLoadedLocked()
             val v = mMap?.get(key) as? MutableSet<String>
-            return v ?: defValues
+            return v?.toMutableSet() ?: defValues
         }
     }
 
@@ -112,31 +115,22 @@ class XSharedPreferences(packageName: String, prefFileName: String) : SharedPref
             return
         }
         var map: Map<String, Any>? = null
-        var stream: FileInputStream? = null
         try {
-            val context = XposedHelpers.callStaticMethod(
-                Class.forName("android.app.ActivityThread"), "currentApplication"
-            ) as Context
-            stream = FileInputStream(
-                context.contentResolver.openFileDescriptor(mUri, "r")?.fileDescriptor
-            )
-            map = XposedHelpers.callStaticMethod(
-                Class.forName("com.android.internal.util.XmlUtils"), "readMapXml", stream
-            ) as Map<String, Any>
-            stream.close()
+            val context = ProcessContext.create()
+            val fileDescriptor = context.contentResolver.openFileDescriptor(mUri, "r")
+            if (fileDescriptor != null) {
+                ParcelFileDescriptor.AutoCloseInputStream(fileDescriptor).use { stream ->
+                    map = HookUtils.callStaticMethod(
+                        Class.forName("com.android.internal.util.XmlUtils"), "readMapXml", stream
+                    ) as Map<String, Any>
+                }
+            }
         } catch (e: XmlPullParserException) {
             Log.w(TAG, "getSharedPreferences", e)
         } catch (ignored: FileNotFoundException) {
             // SharedPreferencesImpl has a canRead() check, so it doesn't log anything in case the file doesn't exist
         } catch (e: Throwable) {
             Log.w(TAG, "getSharedPreferences", e)
-        } finally {
-            try {
-                stream?.close()
-            } catch (rethrown: RuntimeException) {
-                throw rethrown
-            } catch (ignored: Exception) {
-            }
         }
         mLoaded = true
         mMap = map ?: HashMap()

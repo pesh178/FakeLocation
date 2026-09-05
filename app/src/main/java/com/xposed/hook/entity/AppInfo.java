@@ -9,5 +9,7 @@ public class AppInfo implements Serializable {
     public String title;
     public String packageName;
     public long time;
+    public boolean enabled;
+    public boolean isSystem;
     public transient Drawable icon;
 }

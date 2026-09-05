@@ -1,0 +1,11 @@
+Source: https://libxposed.github.io/api/
+Version: libxposed API 102.0.0
+Retrieved: 2026-09-03
+
+This directory is a local mirror of the Javadoc site under the source URL.
+It includes the package, type, index, search, hierarchy, and static asset files
+referenced by the site within the /api/ path.
+
+The source stylesheet references resources/fonts/dejavu.css, but the source URL
+returned HTTP 404 for that file during mirroring. The remaining documentation
+files and assets were downloaded successfully.

@@ -11,7 +11,6 @@ public class PkgConfig {
 
     public static final List<String> packages = new ArrayList<>();
     public static final String pkg_dingtalk = "com.alibaba.android.rimet";
-    public static final String pkg_wechat = "com.tencent.mm";
 
     static {
         packages.add("com.autonavi.minimap");

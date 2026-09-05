@@ -14,8 +14,10 @@ import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-import de.robv.android.xposed.XposedHelpers;
+import com.xposed.hook.core.ProcessContext;
+
 import mirror.RefMethod;
 
 /**
@@ -36,23 +38,16 @@ public class LocationHandler extends Handler {
         return instance;
     }
 
-    private Context context;
+    private final AtomicBoolean started = new AtomicBoolean();
 
     private LocationHandler() {
         super(Looper.getMainLooper());
     }
 
-    public Context requireContext() throws ClassNotFoundException {
-        if (context != null)
-            return context;
-        context = (Context) XposedHelpers.callStaticMethod(Class.forName("android.app.ActivityThread"), "currentApplication");
-        return context;
-    }
-
     @Override
     public void handleMessage(Message msg) {
         try {
-            Object transport = requireContext().getSystemService(Context.LOCATION_SERVICE);
+            Object transport = ProcessContext.create().getSystemService(Context.LOCATION_SERVICE);
             notifyNmeaReceived(transport);
             notifyLocation(transport);
             sendEmptyMessageDelayed(0, 10000);
@@ -86,8 +81,9 @@ public class LocationHandler extends Handler {
     }
 
     public void start() {
-        removeMessages(0);
-        sendEmptyMessageDelayed(0, 1000);
+        if (started.compareAndSet(false, true)) {
+            sendEmptyMessageDelayed(0, 1000);
+        }
     }
 
     private void notifyLocation(Object transport) {

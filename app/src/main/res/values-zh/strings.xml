@@ -2,6 +2,7 @@
     <string name="app_name">XposedHook</string>
 
     <string name="search_app">搜索应用</string>
+    <string name="show_system_apps">显示系统应用</string>
 
     <string name="gps_location">GPS定位</string>
     <string name="cell_location">基站定位（选填）</string>
@@ -14,11 +15,4 @@
     <string name="save">保存</string>
     <string name="save_success">保存成功</string>
     <string name="reboot_app">重启App</string>
-
-    <string name="wechat_hook">微信红包</string>
-    <string name="quick_open_lucky_money">快速打开红包</string>
-    <string name="show_lucky_money_coming_toast">有红包消息时toast提示</string>
-    <string name="prevent_message_recalled">消息防撤回</string>
-    <string name="disable_3_days_of_Moments_limit">解除好友朋友圈仅3天可见限制</string>
-    <string name="lucky_money_delay">自动抢红包延时</string>
 </resources>

@@ -2,6 +2,7 @@
     <string name="app_name">XposedHook</string>
 
     <string name="search_app">Search for apps</string>
+    <string name="show_system_apps">Show system apps</string>
 
     <string name="gps_location">GPS Location</string>
     <string name="cell_location">Cell Location - Optional</string>
@@ -14,11 +15,4 @@
     <string name="save">Save</string>
     <string name="save_success">Save Success</string>
     <string name="reboot_app">Reboot App</string>
-
-    <string name="wechat_hook">Wechat Hook</string>
-    <string name="quick_open_lucky_money">quick open lucky money</string>
-    <string name="show_lucky_money_coming_toast">show lucky money coming toast</string>
-    <string name="prevent_message_recalled">prevent message recalled</string>
-    <string name="disable_3_days_of_Moments_limit">disable 3 days of Moments limit</string>
-    <string name="lucky_money_delay">lucky money delay</string>
 </resources>

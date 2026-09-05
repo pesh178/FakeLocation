@@ -1,33 +1,39 @@
 package com.xposed.hook
 
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import com.xposed.hook.config.Constants
 import com.xposed.hook.config.PkgConfig
+import com.xposed.hook.core.XposedHolder
 import com.xposed.hook.location.LocationHook
+import com.xposed.hook.storage.XSharedPreferences
 import com.xposed.hook.utils.CellLocationHelper
-import com.xposed.hook.wechat.LuckyMoneyHook
-import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.XSharedPreferences
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
+import kotlin.concurrent.thread
 
 /**
  * Created by lin on 2017/7/22.
+ * libxposed API 102 模块入口。
  */
-class Main : IXposedHookLoadPackage {
+class Main : XposedModule() {
 
-    override fun handleLoadPackage(loadPackageParam: LoadPackageParam) {
-        Log.d("***********************", loadPackageParam.processName)
-        LuckyMoneyHook.disableTinker(loadPackageParam)
-        Handler(Looper.getMainLooper()).post {
+    override fun onModuleLoaded(param: ModuleLoadedParam) {
+        XposedHolder.init(this, param.processName)
+    }
+
+    override fun onPackageReady(param: PackageReadyParam) {
+        val packageName = param.packageName
+        val classLoader = param.classLoader
+        thread(name = "FakeLocation-$packageName") {
             try {
-                val packageName = loadPackageParam.packageName
-                LuckyMoneyHook.hook(loadPackageParam)
-                val preferences = XSharedPreferences(BuildConfig.APPLICATION_ID, Constants.PREF_FILE_NAME)
+                val preferences = XSharedPreferences(
+                    BuildConfig.APPLICATION_ID,
+                    Constants.PREF_FILE_NAME
+                )
                 if (!preferences.getBoolean(packageName, false))
-                    return@post
+                    return@thread
+
                 var defaultLatitude = Constants.DEFAULT_LATITUDE
                 var defaultLongitude = Constants.DEFAULT_LONGITUDE
                 if (PkgConfig.pkg_dingtalk == packageName) {
@@ -49,9 +55,10 @@ class Main : IXposedHookLoadPackage {
                 }
                 val lac = CellLocationHelper.getLac(preferences, prefix)
                 val cid = CellLocationHelper.getCid(preferences, prefix)
-                LocationHook.hookAndChange(loadPackageParam, latitude, longitude, lac, cid)
+                Log.d("FakeLocation", "Preparing hooks for $packageName")
+                LocationHook.hookAndChange(packageName, classLoader, latitude, longitude, lac, cid)
             } catch (e: Throwable) {
-                XposedBridge.log(e)
+                XposedHolder.log(e)
             }
         }
     }
