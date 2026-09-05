@@ -6,3 +6,6 @@
 /build
 /captures
 .externalNativeBuild
+/work/
+/scripts/
+/docs/lsposed-api-102/
