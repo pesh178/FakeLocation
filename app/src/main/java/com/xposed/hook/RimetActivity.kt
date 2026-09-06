@@ -548,7 +548,7 @@ class RimetActivity : AppCompatActivity() {
                     lastKnownLocation = location
                 }
             }
-            lm.requestLocationUpdates(provider, 1000L, 0f, gpsListener, mainLooper)
+            lm.requestLocationUpdates(provider, 5000L, 0f, gpsListener, mainLooper)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && provider != LocationManager.PASSIVE_PROVIDER) {
                 lm.getCurrentLocation(provider, null, mainExecutor) { location ->
                     location?.let { updateCurrentLocation(it) }
