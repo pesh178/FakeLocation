@@ -52,6 +52,17 @@ import com.xposed.hook.theme.AppTheme
 import com.xposed.hook.utils.CellLocationHelper
 import com.xposed.hook.utils.SharedPreferencesHelper
 
+internal object LocationProviderSelector {
+    fun orderedProviders(providers: List<String>): List<String> {
+        val preferredProviders = listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER
+        )
+        return (preferredProviders + providers).distinct().filter { it in providers }
+    }
+}
+
 class RimetActivity : AppCompatActivity() {
 
     private lateinit var sp: SharedPreferences
@@ -475,8 +486,7 @@ class RimetActivity : AppCompatActivity() {
     private var gpsListener: LocationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             gpsL = location
-            _currentLatitude.value = location.latitude.toString()
-            _currentLongitude.value = location.longitude.toString()
+            updateCurrentLocation(location)
         }
 
         override fun onStatusChanged(provider: String, status: Int, extras: Bundle) {}
@@ -484,12 +494,13 @@ class RimetActivity : AppCompatActivity() {
         override fun onProviderDisabled(provider: String) {}
     }
 
+    private fun updateCurrentLocation(location: Location) {
+        _currentLatitude.value = location.latitude.toString()
+        _currentLongitude.value = location.longitude.toString()
+    }
+
     private fun requestPermissions() {
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!hasLocationPermission()) {
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(
@@ -509,24 +520,37 @@ class RimetActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 101 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        if (requestCode == 101 && hasLocationPermission()) {
             startLocation()
         }
     }
 
+    private fun hasLocationPermission(): Boolean {
+        return ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     private fun startLocation() {
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-            && ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!hasLocationPermission()) {
             return
         }
-        lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, gpsListener, null)
+
+        val providers = LocationProviderSelector.orderedProviders(lm.getProviders(true))
+        var lastKnownLocation: Location? = null
+        for (provider in providers) {
+            lm.getLastKnownLocation(provider)?.let { location ->
+                if (lastKnownLocation == null || location.time > lastKnownLocation!!.time) {
+                    lastKnownLocation = location
+                }
+            }
+            lm.requestLocationUpdates(provider, 1000L, 0f, gpsListener, mainLooper)
+        }
+        lastKnownLocation?.let { updateCurrentLocation(it) }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             tm.listen(listener, PhoneStateListener.LISTEN_CELL_LOCATION)
         } else {
