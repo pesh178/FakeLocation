@@ -549,6 +549,11 @@ class RimetActivity : AppCompatActivity() {
                 }
             }
             lm.requestLocationUpdates(provider, 1000L, 0f, gpsListener, mainLooper)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && provider != LocationManager.PASSIVE_PROVIDER) {
+                lm.getCurrentLocation(provider, null, mainExecutor) { location ->
+                    location?.let { updateCurrentLocation(it) }
+                }
+            }
         }
         lastKnownLocation?.let { updateCurrentLocation(it) }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {

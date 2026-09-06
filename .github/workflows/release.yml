@@ -6,7 +6,7 @@ on:
       tag:
         description: Release tag
         required: true
-        default: v1.6.4
+        default: v1.6.5
 
 permissions:
   contents: write
@@ -49,14 +49,14 @@ jobs:
         run: |
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
           test -x "$APKSIGNER"
-          "$APKSIGNER" verify --verbose app/build/outputs/apk/release/FakeLocation_v1.6.4.apk
-          sha256sum app/build/outputs/apk/release/FakeLocation_v1.6.4.apk
+          "$APKSIGNER" verify --verbose app/build/outputs/apk/release/FakeLocation_v1.6.5.apk
+          sha256sum app/build/outputs/apk/release/FakeLocation_v1.6.5.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-          APK: app/build/outputs/apk/release/FakeLocation_v1.6.4.apk
+          APK: app/build/outputs/apk/release/FakeLocation_v1.6.5.apk
         run: |
           gh release create "$TAG" "$APK" \
             --repo "$GITHUB_REPOSITORY" \

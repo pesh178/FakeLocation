@@ -16,8 +16,8 @@ android {
         applicationId "com.xposed.hook"
         minSdkVersion 21
         targetSdkVersion 29
-        versionCode 19
-        versionName "1.6.4"
+        versionCode 20
+        versionName "1.6.5"
     }
     signingConfigs {
         release {
