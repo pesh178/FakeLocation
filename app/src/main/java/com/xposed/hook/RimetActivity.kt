@@ -50,7 +50,6 @@ import com.xposed.hook.extension.dpInPx
 import com.xposed.hook.extension.toBitmap
 import com.xposed.hook.theme.AppTheme
 import com.xposed.hook.utils.CellLocationHelper
-import com.xposed.hook.utils.SharedPreferencesHelper
 
 internal object LocationProviderSelector {
     fun orderedProviders(providers: List<String>): List<String> {
@@ -63,6 +62,25 @@ internal object LocationProviderSelector {
     }
 }
 
+internal object CurrentLocationSelector {
+    private const val STALE_LOCATION_NANOS = 30_000_000_000L
+
+    fun shouldReplace(current: Location?, candidate: Location): Boolean {
+        if (current == null) return true
+        if (candidate.elapsedRealtimeNanos < current.elapsedRealtimeNanos) return false
+        val candidateIsGps = candidate.provider == LocationManager.GPS_PROVIDER
+        val currentIsGps = current.provider == LocationManager.GPS_PROVIDER
+        val age = candidate.elapsedRealtimeNanos - current.elapsedRealtimeNanos
+        if (currentIsGps && !candidateIsGps && age < STALE_LOCATION_NANOS) return false
+        if (!currentIsGps && candidateIsGps) return true
+        if (candidate.hasAccuracy() && current.hasAccuracy() &&
+            candidate.accuracy > current.accuracy + 10f && age < STALE_LOCATION_NANOS
+        ) return false
+        return true
+    }
+}
+
+
 class RimetActivity : AppCompatActivity() {
 
     private lateinit var sp: SharedPreferences
@@ -70,9 +88,10 @@ class RimetActivity : AppCompatActivity() {
     private var isDingTalk = false
 
     private lateinit var tm: TelephonyManager
-    private lateinit var l: GsmCellLocation
     private lateinit var lm: LocationManager
-    private lateinit var gpsL: Location
+    private var locationStarted = false
+    private var cellListenerStarted = false
+    private var locationGeneration = 0
 
     private val _currentLatitude = MutableLiveData("")
     private val _currentLongitude = MutableLiveData("")
@@ -90,6 +109,18 @@ class RimetActivity : AppCompatActivity() {
         sp = getSharedPreferences(Constants.PREF_FILE_NAME, MODE_PRIVATE)
         setContent { Container() }
         requestPermissions()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (::lm.isInitialized && hasLocationPermission()) {
+            startLocation()
+        }
+    }
+
+    override fun onStop() {
+        stopLocation()
+        super.onStop()
     }
 
     private fun configureImmersiveStatusBar() {
@@ -290,7 +321,6 @@ class RimetActivity : AppCompatActivity() {
                                 .putLong(prefix + "time", System.currentTimeMillis())
                                 .putBoolean(appInfo.packageName, isChecked)
                                 .commit()
-                            SharedPreferencesHelper.makeWorldReadable(sp)
                             Toast.makeText(
                                 applicationContext,
                                 R.string.save_success,
@@ -441,33 +471,31 @@ class RimetActivity : AppCompatActivity() {
     }
 
     private fun parseLong(str: String): Long {
-        return try {
-            str.toLong()
-        } catch (e: Exception) {
-            -1
-        }
-    }
-
-    override fun finish() {
-        stopLocation()
-        super.finish()
+        return str.toLongOrNull() ?: -1L
     }
 
     private var listener: PhoneStateListener = object : PhoneStateListener() {
         override fun onCellLocationChanged(location: CellLocation) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return
             if (location is GsmCellLocation) {
-                l = location
-                _currentLac.value = l.lac.toString()
-                _currentCid.value = l.cid.toString()
+                _currentLac.value = location.lac.toString()
+                _currentCid.value = location.cid.toString()
             }
         }
 
         override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>?) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-            if (cellInfo == null || cellInfo.isEmpty()) return
-            when (val cellIdentity = cellInfo[0].cellIdentity) {
+            val cellIdentity = cellInfo?.firstOrNull()?.cellIdentity ?: return
+            when (cellIdentity) {
                 is CellIdentityGsm -> {
+                    _currentLac.value = cellIdentity.lac.toString()
+                    _currentCid.value = cellIdentity.cid.toString()
+                }
+                is CellIdentityWcdma -> {
+                    _currentLac.value = cellIdentity.lac.toString()
+                    _currentCid.value = cellIdentity.cid.toString()
+                }
+                is CellIdentityTdscdma -> {
                     _currentLac.value = cellIdentity.lac.toString()
                     _currentCid.value = cellIdentity.cid.toString()
                 }
@@ -483,10 +511,14 @@ class RimetActivity : AppCompatActivity() {
         }
     }
 
+    private var currentLocation: Location? = null
+
     private var gpsListener: LocationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            gpsL = location
-            updateCurrentLocation(location)
+            if (CurrentLocationSelector.shouldReplace(currentLocation, location)) {
+                currentLocation = location
+                updateCurrentLocation(location)
+            }
         }
 
         override fun onStatusChanged(provider: String, status: Int, extras: Bundle) {}
@@ -500,18 +532,19 @@ class RimetActivity : AppCompatActivity() {
     }
 
     private fun requestPermissions() {
+        val permissions = mutableListOf<String>()
         if (!hasLocationPermission()) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ),
-                101
-            )
-            return
+            permissions += Manifest.permission.ACCESS_COARSE_LOCATION
+            permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
-        startLocation()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !hasPhoneStatePermission()) {
+            permissions += Manifest.permission.READ_PHONE_STATE
+        }
+        if (permissions.isEmpty()) {
+            startLocation()
+        } else {
+            ActivityCompat.requestPermissions(this, permissions.distinct().toTypedArray(), 101)
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -535,36 +568,70 @@ class RimetActivity : AppCompatActivity() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun startLocation() {
-        if (!hasLocationPermission()) {
-            return
-        }
+    private fun hasFineLocationPermission(): Boolean {
+        return ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+    private fun hasPhoneStatePermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_PHONE_STATE
+        ) == PackageManager.PERMISSION_GRANTED
+    }
 
-        val providers = LocationProviderSelector.orderedProviders(lm.getProviders(true))
-        var lastKnownLocation: Location? = null
-        for (provider in providers) {
-            lm.getLastKnownLocation(provider)?.let { location ->
-                if (lastKnownLocation == null || location.time > lastKnownLocation!!.time) {
-                    lastKnownLocation = location
+    private fun hasCellPermission(): Boolean {
+        return hasFineLocationPermission() &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || hasPhoneStatePermission())
+    }
+
+    private fun startLocation() {
+        if (!hasLocationPermission()) return
+        if (!locationStarted) {
+            locationStarted = true
+            val generation = ++locationGeneration
+            val providers = LocationProviderSelector.orderedProviders(lm.getProviders(true))
+            for (provider in providers) {
+                lm.getLastKnownLocation(provider)?.let { location ->
+                    if (CurrentLocationSelector.shouldReplace(currentLocation, location)) {
+                        currentLocation = location
+                        updateCurrentLocation(location)
+                    }
                 }
-            }
-            lm.requestLocationUpdates(provider, 5000L, 0f, gpsListener, mainLooper)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && provider != LocationManager.PASSIVE_PROVIDER) {
-                lm.getCurrentLocation(provider, null, mainExecutor) { location ->
-                    location?.let { updateCurrentLocation(it) }
+                lm.requestLocationUpdates(provider, 5000L, 0f, gpsListener, mainLooper)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && provider != LocationManager.PASSIVE_PROVIDER) {
+                    lm.getCurrentLocation(provider, null, mainExecutor) { location ->
+                        if (locationStarted && generation == locationGeneration && location != null &&
+                            CurrentLocationSelector.shouldReplace(currentLocation, location)
+                        ) {
+                            currentLocation = location
+                            updateCurrentLocation(location)
+                        }
+                    }
                 }
             }
         }
-        lastKnownLocation?.let { updateCurrentLocation(it) }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            tm.listen(listener, PhoneStateListener.LISTEN_CELL_LOCATION)
-        } else {
-            tm.listen(listener, PhoneStateListener.LISTEN_CELL_INFO)
+        if (!cellListenerStarted && hasCellPermission()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                tm.listen(listener, PhoneStateListener.LISTEN_CELL_LOCATION)
+            } else {
+                tm.listen(listener, PhoneStateListener.LISTEN_CELL_INFO)
+            }
+            cellListenerStarted = true
         }
     }
 
     private fun stopLocation() {
-        tm.listen(listener, PhoneStateListener.LISTEN_NONE)
-        lm.removeUpdates(gpsListener)
+        locationGeneration++
+        if (!locationStarted && !cellListenerStarted) return
+        locationStarted = false
+        if (::tm.isInitialized && cellListenerStarted) {
+            tm.listen(listener, PhoneStateListener.LISTEN_NONE)
+            cellListenerStarted = false
+        }
+        if (::lm.isInitialized) {
+            lm.removeUpdates(gpsListener)
+        }
     }
 }

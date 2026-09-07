@@ -92,15 +92,15 @@ class XSharedPreferences(
     }
 
     override fun edit(): SharedPreferences.Editor {
-        TODO("Not yet implemented")
+        throw UnsupportedOperationException("XSharedPreferences is read-only")
     }
 
     override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {
-        TODO("Not yet implemented")
+        // Remote preferences are immutable for the target process.
     }
 
     override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {
-        TODO("Not yet implemented")
+        // Remote preferences are immutable for the target process.
     }
 
     private fun startLoadFromDisk() {

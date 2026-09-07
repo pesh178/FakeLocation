@@ -12,6 +12,13 @@ import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import kotlin.concurrent.thread
 
+internal object CoordinateParser {
+    fun parse(value: String?, fallback: String, minimum: Double, maximum: Double): Double {
+        val parsed = value?.toDoubleOrNull()
+        return parsed?.takeIf { it.isFinite() && it in minimum..maximum } ?: fallback.toDouble()
+    }
+}
+
 /**
  * Created by lin on 2017/7/22.
  * libxposed API 102 模块入口。
@@ -31,28 +38,31 @@ class Main : XposedModule() {
                     BuildConfig.APPLICATION_ID,
                     Constants.PREF_FILE_NAME
                 )
-                if (!preferences.getBoolean(packageName, false))
-                    return@thread
+                if (!preferences.getBoolean(packageName, false)) return@thread
 
-                var defaultLatitude = Constants.DEFAULT_LATITUDE
-                var defaultLongitude = Constants.DEFAULT_LONGITUDE
-                if (PkgConfig.pkg_dingtalk == packageName) {
-                    defaultLatitude = "0"
-                    defaultLongitude = "0"
+                val defaultLatitude = if (PkgConfig.pkg_dingtalk == packageName) {
+                    "0"
+                } else {
+                    Constants.DEFAULT_LATITUDE
+                }
+                val defaultLongitude = if (PkgConfig.pkg_dingtalk == packageName) {
+                    "0"
+                } else {
+                    Constants.DEFAULT_LONGITUDE
                 }
                 val prefix = packageName + "_"
-                var latitude = 0.0
-                var longitude = 0.0
-                try {
-                    preferences.getString(prefix + "latitude", defaultLatitude)?.let {
-                        latitude = it.toDouble()
-                    }
-                    preferences.getString(prefix + "longitude", defaultLongitude)?.let {
-                        longitude = it.toDouble()
-                    }
-                } catch (e: NumberFormatException) {
-                    e.printStackTrace()
-                }
+                val latitude = CoordinateParser.parse(
+                    preferences.getString(prefix + "latitude", defaultLatitude),
+                    defaultLatitude,
+                    -90.0,
+                    90.0
+                )
+                val longitude = CoordinateParser.parse(
+                    preferences.getString(prefix + "longitude", defaultLongitude),
+                    defaultLongitude,
+                    -180.0,
+                    180.0
+                )
                 val lac = CellLocationHelper.getLac(preferences, prefix)
                 val cid = CellLocationHelper.getCid(preferences, prefix)
                 Log.d("FakeLocation", "Preparing hooks for $packageName")

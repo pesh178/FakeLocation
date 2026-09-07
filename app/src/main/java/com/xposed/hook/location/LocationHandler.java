@@ -21,21 +21,23 @@ import com.xposed.hook.core.ProcessContext;
 import mirror.RefMethod;
 
 /**
- * Created by lin on 2017/8/6.
+ * Periodically dispatches the configured location to registered framework transports.
  */
-
 public class LocationHandler extends Handler {
-
-    private static LocationHandler instance;
+    private static volatile LocationHandler instance;
 
     public static LocationHandler getInstance() {
-        if (instance == null) {
+        LocationHandler result = instance;
+        if (result == null) {
             synchronized (LocationHandler.class) {
-                if (instance == null)
-                    instance = new LocationHandler();
+                result = instance;
+                if (result == null) {
+                    result = new LocationHandler();
+                    instance = result;
+                }
             }
         }
-        return instance;
+        return result;
     }
 
     private final AtomicBoolean started = new AtomicBoolean();
@@ -57,23 +59,45 @@ public class LocationHandler extends Handler {
         }
     }
 
+    public static Location createLocation(String packageName) {
+        return createLocation(
+                LocationConfig.getLatitude(packageName),
+                LocationConfig.getLongitude(packageName),
+                packageName);
+    }
+
     public static Location createLocation(double latitude, double longitude) {
-        Location l = new Location(android.location.LocationManager.GPS_PROVIDER);
-        l.setLatitude(latitude);
-        l.setLongitude(longitude);
-        l.setAccuracy((float) Math.random() + 8);
-        l.setBearing((int) (360 * Math.random()));
-        l.setTime(System.currentTimeMillis());
-        l.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
-        Bundle extraBundle = new Bundle();
-        int svCount = VirtualGPSSatalines.get().getSvCount();
-        extraBundle.putInt("satellites", svCount);
-        extraBundle.putInt("satellitesvalue", svCount);
-        l.setExtras(extraBundle);
-        return l;
+        return createLocation(latitude, longitude, null);
+    }
+
+    private static Location createLocation(double latitude, double longitude, String packageName) {
+        Location location = new Location(android.location.LocationManager.GPS_PROVIDER);
+        location.setLatitude(latitude);
+        location.setLongitude(longitude);
+        location.setAccuracy((float) Math.random() + 8);
+        location.setBearing((int) (360 * Math.random()));
+        location.setTime(System.currentTimeMillis());
+        location.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
+        Bundle extras = new Bundle();
+        int satelliteCount = VirtualGPSSatalines.get().getSvCount();
+        extras.putInt("satellites", satelliteCount);
+        extras.putInt("satellitesvalue", satelliteCount);
+        location.setExtras(extras);
+        LocationConfig.bindLocation(location, packageName);
+        return location;
+    }
+
+    public static void updateLocation(Location location, String packageName) {
+        if (location == null) return;
+        updateLocation(
+                location,
+                LocationConfig.getLatitude(packageName),
+                LocationConfig.getLongitude(packageName));
+        LocationConfig.bindLocation(location, packageName);
     }
 
     public static void updateLocation(Location location, double latitude, double longitude) {
+        if (location == null) return;
         location.setLatitude(latitude);
         location.setLongitude(longitude);
         location.setTime(System.currentTimeMillis());
@@ -93,28 +117,25 @@ public class LocationHandler extends Handler {
         } else if (LocationManager.mListeners != null) {
             listeners = LocationManager.mListeners.get(transport);
         }
-
         if (listeners == null || listeners.isEmpty()) return;
 
-        RefMethod<Void> method;
-        if (LocationManager.ListenerTransport.onLocationChanged != null)
-            method = LocationManager.ListenerTransport.onLocationChanged;
-        else
-            method = LocationManager.LocationListenerTransport.onLocationChanged;
+        RefMethod<Void> method = LocationManager.ListenerTransport.onLocationChanged;
+        if (method == null) method = LocationManager.LocationListenerTransport.onLocationChanged;
         if (method == null) return;
 
-        Location location = createLocation(LocationConfig.getLatitude(), LocationConfig.getLongitude());
         //noinspection unchecked
         Set<Map.Entry> entries = listeners.entrySet();
         for (Map.Entry entry : entries) {
             Object value = entry.getValue();
             if (value == null) continue;
-            notifyLocation(method, value, location);
+            String packageName = LocationConfig.packageForListener(entry.getKey());
+            notifyLocation(method, value, createLocation(packageName));
         }
     }
 
     private void notifyLocation(RefMethod<Void> method, Object transport, Location location) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (!(transport instanceof WeakReference)) return;
             transport = ((WeakReference) transport).get();
             if (transport == null) return;
             method.call(transport, Collections.singletonList(location), null);
@@ -126,14 +147,21 @@ public class LocationHandler extends Handler {
     private void notifyNmeaReceived(Object transport) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // TODO
+                Object manager = LocationManager.GnssLazyLoader.sGnssNmeaListeners == null
+                        ? null : LocationManager.GnssLazyLoader.sGnssNmeaListeners.get();
+                Map registrations = manager == null || LocationManager.ListenerTransportManager.mRegistrations == null
+                        ? null : LocationManager.ListenerTransportManager.mRegistrations.get(manager);
+                notifyNmeaRegistrations(registrations);
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Object manager = LocationManager.mGnssStatusListenerManager.get(transport);
-                notifyNmeaListener(LocationManager.GnssStatusListenerManager.mListenerTransport.get(manager));
+                Object manager = LocationManager.mGnssStatusListenerManager == null
+                        ? null : LocationManager.mGnssStatusListenerManager.get(transport);
+                Object listenerTransport = manager == null || LocationManager.GnssStatusListenerManager.mListenerTransport == null
+                        ? null : LocationManager.GnssStatusListenerManager.mListenerTransport.get(manager);
+                notifyNmeaListener(listenerTransport, LocationConfig.packageNameForObject(listenerTransport));
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                notifyNmeaListener(LocationManager.mGnssNmeaListeners.get(transport));
-                notifyNmeaListener(LocationManager.mGpsNmeaListeners.get(transport));
-            } else {
+                if (LocationManager.mGnssNmeaListeners != null) notifyNmeaListener(LocationManager.mGnssNmeaListeners.get(transport));
+                if (LocationManager.mGpsNmeaListeners != null) notifyNmeaListener(LocationManager.mGpsNmeaListeners.get(transport));
+            } else if (LocationManager.mNmeaListeners != null) {
                 notifyNmeaListener(LocationManager.mNmeaListeners.get(transport));
             }
         } catch (Throwable e) {
@@ -141,23 +169,36 @@ public class LocationHandler extends Handler {
         }
     }
 
+    private void notifyNmeaRegistrations(Map registrations) {
+        if (registrations == null || registrations.isEmpty()) return;
+        for (Object value : registrations.values()) {
+            if (!(value instanceof WeakReference)) continue;
+            Object listenerTransport = ((WeakReference) value).get();
+            if (listenerTransport != null) {
+                notifyNmeaListener(listenerTransport, LocationConfig.packageForObject(listenerTransport));
+            }
+        }
+    }
+
     private void notifyNmeaListener(Map listeners) {
-        if (listeners != null && !listeners.isEmpty()) {
-            //noinspection unchecked
-            Set<Map.Entry> entries = listeners.entrySet();
-            for (Map.Entry entry : entries)
-                notifyNmeaListener(entry.getValue());
+        if (listeners == null || listeners.isEmpty()) return;
+        //noinspection unchecked
+        Set<Map.Entry> entries = listeners.entrySet();
+        for (Map.Entry entry : entries) {
+            notifyNmeaListener(entry.getValue(), LocationConfig.packageForObject(entry.getKey()));
         }
     }
 
     private void notifyNmeaListener(Object object) {
-        if (object == null)
-            return;
+        notifyNmeaListener(object, LocationConfig.packageForObject(object));
+    }
+
+    private void notifyNmeaListener(Object object, String packageName) {
+        if (object == null) return;
         try {
-            MockLocationHelper.invokeNmeaReceived(object);
+            MockLocationHelper.invokeNmeaReceived(object, packageName);
         } catch (Throwable e) {
             Log.d(LocationHook.TAG, e.toString(), e);
         }
     }
-
 }

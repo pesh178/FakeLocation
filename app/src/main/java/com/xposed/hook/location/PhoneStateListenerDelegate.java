@@ -1,74 +1,77 @@
 package com.xposed.hook.location;
 
+import android.telephony.CellInfo;
 import android.telephony.CellLocation;
 import android.telephony.PhoneStateListener;
-import android.telephony.gsm.GsmCellLocation;
 import android.util.Log;
 
 import com.xposed.hook.core.HookUtils;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface.Chain;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
-/**
- * Created by lin on 2018/1/25.
- */
-
-public class PhoneStateListenerDelegate {
-
+/** Binds telephony callback objects to their owning target package. */
+public final class PhoneStateListenerDelegate {
     private static final String TAG = "PhoneStateListener";
+    private static final Set<Method> HOOKED_METHODS = new HashSet<>();
+    private static boolean constructorHooked;
 
-    private static List<String> hookedClass = new ArrayList<>();
+    private PhoneStateListenerDelegate() {
+    }
 
-    public static void hookPhoneStateListener(int lac, int cid) {
+    public static synchronized void hookPhoneStateListener() {
+        if (constructorHooked) return;
+        constructorHooked = true;
         try {
             Constructor<PhoneStateListener> constructor = PhoneStateListener.class.getConstructor();
-            HookUtils.hookConstructor(constructor, new Hooker() {
-                @Override
-                public Object intercept(Chain chain) throws Throwable {
-                    Object result = chain.proceed();
-                    Class<?> clazz = chain.getThisObject().getClass();
-                    while (clazz != null && clazz != PhoneStateListener.class) {
-                        if (hookedClass.contains(clazz.getName()))
-                            break;
-                        try {
-                            Method method = HookUtils.findMethodExact(clazz, "onCellLocationChanged", CellLocation.class);
-                            hookPhoneStateListener(method, lac, cid);
-                            hookedClass.add(clazz.getName());
-                            break;
-                        } catch (Throwable e) {
-                            Log.i(TAG, e.toString());
-                        }
-                        clazz = clazz.getSuperclass();
-                    }
-                    return result;
-                }
+            HookUtils.hookConstructor(constructor, chain -> {
+                Object result = chain.proceed();
+                hookListenerClass(result == null ? null : result.getClass());
+                return result;
             });
         } catch (Throwable e) {
             Log.w(TAG, e.toString());
         }
     }
 
-    private static void hookPhoneStateListener(Method method, int lac, int cid) {
+    private static synchronized void hookListenerClass(Class<?> clazz) {
+        if (clazz == null || clazz == PhoneStateListener.class) return;
+        hookCallback(findMethod(clazz, "onCellLocationChanged", CellLocation.class));
+        hookCallback(findMethod(clazz, "onCellInfoChanged", List.class));
+    }
+
+    private static Method findMethod(Class<?> clazz, String name, Class<?> parameter) {
         try {
-            HookUtils.hookMethod(method, new Hooker() {
-                @Override
-                public Object intercept(Chain chain) throws Throwable {
-                    Object[] args = HookUtils.argsOf(chain);
-                    if (args[0] instanceof GsmCellLocation) {
-                        Log.i(TAG, "hooking onCellLocationChanged");
-                        ((GsmCellLocation) args[0]).setLacAndCid(lac, cid);
-                    }
-                    return chain.proceed(args);
-                }
-            });
-        } catch (Throwable e) {
-            Log.w(TAG, e.toString());
+            return HookUtils.findMethodExact(clazz, name, parameter);
+        } catch (NoSuchMethodException ignored) {
+            return null;
         }
+    }
+
+    private static void hookCallback(Method method) {
+        if (method == null || !HOOKED_METHODS.add(method)) return;
+        HookUtils.hookMethod(method, new Hooker() {
+            @Override
+            public Object intercept(Chain chain) throws Throwable {
+                Object[] args = HookUtils.argsOf(chain);
+                String packageName = LocationConfig.packageForListener(chain.getThisObject());
+                if (args.length > 0 && args[0] instanceof CellLocation) {
+                    LocationConfig.bindCellLocation(args[0], packageName);
+                } else if (args.length > 0 && args[0] instanceof Iterable) {
+                    for (Object item : (Iterable<?>) args[0]) {
+                        if (item instanceof CellInfo) {
+                            LocationConfig.bindCellInfo((CellInfo) item, packageName);
+                        }
+                    }
+                }
+                return chain.proceed(args);
+            }
+        });
     }
 }

@@ -39,7 +39,6 @@ import com.xposed.hook.extension.dpInPx
 import com.xposed.hook.extension.toBitmap
 import com.xposed.hook.theme.AppTheme
 import com.xposed.hook.utils.AppHelper
-import com.xposed.hook.utils.SharedPreferencesHelper
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -163,7 +162,6 @@ class MainActivity : AppCompatActivity() {
                                 preferences.edit()
                                     .putBoolean(Constants.SHOW_SYSTEM_APPS, enabled)
                                     .commit()
-                                SharedPreferencesHelper.makeWorldReadable(preferences)
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colors.primary,
@@ -240,7 +238,6 @@ class MainActivity : AppCompatActivity() {
                         isHookEnabled = enabled
                         item.enabled = enabled
                         preferences.edit().putBoolean(item.packageName, enabled).commit()
-                        SharedPreferencesHelper.makeWorldReadable(preferences)
                         lifecycleScope.launch {
                             appList = AppHelper.getAppList()
                         }

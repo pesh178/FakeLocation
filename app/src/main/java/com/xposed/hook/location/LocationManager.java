@@ -8,6 +8,7 @@ import mirror.MethodParams;
 import mirror.RefClass;
 import mirror.RefMethod;
 import mirror.RefObject;
+import mirror.RefStaticObject;
 
 public class LocationManager {
     public static Class<?> TYPE = RefClass.load(LocationManager.class, "android.location.LocationManager");
@@ -28,6 +29,27 @@ public class LocationManager {
         public static RefMethod<Void> onNmeaReceived;
     }
 
+    public static class GnssStatusListener {
+        public static Class<?> TYPE = RefClass.load(GnssStatusListener.class, "android.location.LocationManager$GnssStatusListenerManager$GnssStatusListener");
+        @MethodParams({long.class, String.class})
+        public static RefMethod<Void> onNmeaReceived;
+    }
+
+    public static class GnssNmeaTransport {
+        public static Class<?> TYPE = RefClass.load(GnssNmeaTransport.class, "android.location.LocationManager$GnssNmeaTransport");
+        @MethodParams({long.class, String.class})
+        public static RefMethod<Void> onNmeaReceived;
+    }
+
+    public static class GnssLazyLoader {
+        public static Class<?> TYPE = RefClass.load(GnssLazyLoader.class, "android.location.LocationManager$GnssLazyLoader");
+        public static RefStaticObject<Object> sGnssNmeaListeners;
+    }
+
+    public static class ListenerTransportManager {
+        public static Class<?> TYPE = RefClass.load(ListenerTransportManager.class, "com.android.internal.listeners.ListenerTransportManager");
+        public static RefObject<Map> mRegistrations;
+    }
 
     public static RefObject<Object> mGnssStatusListenerManager;
 
@@ -35,13 +57,6 @@ public class LocationManager {
         public static Class<?> TYPE = RefClass.load(GnssStatusListenerManager.class, "android.location.LocationManager$GnssStatusListenerManager");
         public static RefObject<Object> mListenerTransport;
     }
-
-    public static class GnssStatusListener {
-        public static Class<?> TYPE = RefClass.load(GnssStatusListener.class, "android.location.LocationManager$GnssStatusListenerManager$GnssStatusListener");
-        @MethodParams({long.class, String.class})
-        public static RefMethod<Void> onNmeaReceived;
-    }
-
 
     public static RefObject<Map> mListeners;
     public static RefObject<Map> sLocationListeners;
