@@ -1,6 +1,7 @@
 package com.xposed.hook
 
 import android.app.Application
+import com.xposed.hook.config.RemoteConfig
 
 /**
  * Created by lin on 2021/8/7.
@@ -14,5 +15,6 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         current = this
+        RemoteConfig.start()
     }
 }

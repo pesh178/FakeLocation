@@ -161,7 +161,7 @@ class MainActivity : AppCompatActivity() {
                                 showSystemApps = enabled
                                 preferences.edit()
                                     .putBoolean(Constants.SHOW_SYSTEM_APPS, enabled)
-                                    .commit()
+                                    .apply()
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colors.primary,
@@ -198,6 +198,9 @@ class MainActivity : AppCompatActivity() {
         var isHookEnabled by remember(item.packageName, item.enabled) {
             mutableStateOf(item.enabled)
         }
+        val icon = remember(item.packageName, item.icon) {
+            item.icon.toBitmap(44.dpInPx, 44.dpInPx)
+        }
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -213,7 +216,7 @@ class MainActivity : AppCompatActivity() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Image(
-                    bitmap = item.icon.toBitmap(44.dpInPx, 44.dpInPx),
+                    bitmap = icon,
                     contentDescription = item.title,
                     modifier = Modifier.clip(RoundedCornerShape(10.dp))
                 )
@@ -237,10 +240,8 @@ class MainActivity : AppCompatActivity() {
                     onCheckedChange = { enabled ->
                         isHookEnabled = enabled
                         item.enabled = enabled
-                        preferences.edit().putBoolean(item.packageName, enabled).commit()
-                        lifecycleScope.launch {
-                            appList = AppHelper.getAppList()
-                        }
+                        preferences.edit().putBoolean(item.packageName, enabled).apply()
+                        appList = appList.sortedWith(AppHelper.enabledFirstOrder)
                     },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = MaterialTheme.colors.primary,

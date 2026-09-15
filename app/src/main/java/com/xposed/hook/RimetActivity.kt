@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.drawable.Drawable
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -85,6 +86,7 @@ class RimetActivity : AppCompatActivity() {
 
     private lateinit var sp: SharedPreferences
     private lateinit var appInfo: AppInfo
+    private var appIcon: Drawable? = null
     private var isDingTalk = false
 
     private lateinit var tm: TelephonyManager
@@ -104,6 +106,8 @@ class RimetActivity : AppCompatActivity() {
         appInfo = intent.getSerializableExtra("appInfo") as? AppInfo ?: return
         title = appInfo.title
         isDingTalk = PkgConfig.pkg_dingtalk == appInfo.packageName
+        // AppInfo.icon 是 transient 字段，跨进程传递后为空，按包名重新读取。
+        appIcon = runCatching { packageManager.getApplicationIcon(appInfo.packageName) }.getOrNull()
         tm = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
         lm = getSystemService(LOCATION_SERVICE) as LocationManager
         sp = getSharedPreferences(Constants.PREF_FILE_NAME, MODE_PRIVATE)
@@ -320,7 +324,7 @@ class RimetActivity : AppCompatActivity() {
                                 .putLong(prefix + "cid", parseLong(cid))
                                 .putLong(prefix + "time", System.currentTimeMillis())
                                 .putBoolean(appInfo.packageName, isChecked)
-                                .commit()
+                                .apply()
                             Toast.makeText(
                                 applicationContext,
                                 R.string.save_success,
@@ -372,9 +376,11 @@ class RimetActivity : AppCompatActivity() {
                     contentDescription = stringResource(R.string.back)
                 )
             }
-            if (appInfo.icon != null) {
+            val icon = appIcon
+            if (icon != null) {
+                val bitmap = remember(icon) { icon.toBitmap(48.dpInPx, 48.dpInPx) }
                 Image(
-                    bitmap = appInfo.icon.toBitmap(48.dpInPx, 48.dpInPx),
+                    bitmap = bitmap,
                     contentDescription = appInfo.title,
                     modifier = Modifier.clip(RoundedCornerShape(12.dp))
                 )

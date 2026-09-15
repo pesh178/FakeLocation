@@ -36,8 +36,25 @@ class LocationProviderSelectorTest {
     }
 
     @Test
+    fun nmeaCoordinates_keepFieldWidthAndCarryMinutesOnRounding() {
+        // 分钟不足 10 与整度取值都必须补零到固定宽度
+        assertEquals("3400.0000", com.xposed.hook.location.MockLocationHelper.getGPSLat(34.0))
+        assertEquals("0000.0000", com.xposed.hook.location.MockLocationHelper.getGPSLat(0.0000001))
+        assertEquals("00005.0000", com.xposed.hook.location.MockLocationHelper.getGPSLon(0.0833333333333))
+        // 四舍五入到 60 分必须进位到下一度
+        assertEquals("3500.0000", com.xposed.hook.location.MockLocationHelper.getGPSLat(34.9999999999))
+        assertEquals("18000.0000", com.xposed.hook.location.MockLocationHelper.getGPSLon(179.999999999))
+    }
+
+    @Test
     fun nmeaChecksum_isComputedFromPayload() {
         assertEquals("\$GPVTG,0,T,0,M,0,N,0,K,A,*0F", com.xposed.hook.location.MockLocationHelper.checksum("\$GPVTG,0,T,0,M,0,N,0,K,A,"))
+        assertEquals(
+            "\$GPGSV,1,1,04,12,05,159,36,15,41,087,15,19,38,262,30,31,56,146,19,*59",
+            com.xposed.hook.location.MockLocationHelper.checksum(
+                "\$GPGSV,1,1,04,12,05,159,36,15,41,087,15,19,38,262,30,31,56,146,19,"
+            )
+        )
     }
 
     @Test

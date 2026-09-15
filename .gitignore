@@ -9,3 +9,8 @@
 /work/
 /scripts/
 /docs/lsposed-api-102/
+
+# Local agent/tooling state
+.ai-memory/
+.omp/
+*.deb
