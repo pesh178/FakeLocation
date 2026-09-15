@@ -3,10 +3,20 @@ name: Build and publish release
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag
+      bump:
+        description: Which part of versionName to increment
         required: true
-        default: v1.6.7
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+# Serialise releases: the job commits the version bump and publishes a tag.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -17,6 +27,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          # Tags are needed to reject an existing tag and to generate notes.
+          fetch-depth: 0
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -30,6 +43,52 @@ jobs:
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platforms;android-36"
+
+      - name: Bump version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_TYPE:-branch}" != "branch" ]; then
+            echo "::error::Dispatch this workflow on a branch; it commits the version bump back"
+            exit 1
+          fi
+
+          current_code=$(sed -n 's/^[[:space:]]*versionCode[[:space:]]\+\([0-9]\{1,\}\).*/\1/p' app/build.gradle | head -n 1)
+          current_name=$(sed -n 's/^[[:space:]]*versionName[[:space:]]\+"\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)".*/\1/p' app/build.gradle | head -n 1)
+          if [ -z "$current_code" ] || [ -z "$current_name" ]; then
+            echo "::error::Cannot read versionCode/versionName from app/build.gradle"
+            exit 1
+          fi
+
+          IFS=. read -r major minor patch <<< "$current_name"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::Unsupported bump input: $BUMP"; exit 1 ;;
+          esac
+          new_code=$((current_code + 1))
+          new_name="$major.$minor.$patch"
+
+          if git tag --list "v$new_name" | grep -q .; then
+            echo "::error::Tag v$new_name already exists"
+            exit 1
+          fi
+
+          sed -i "s/^\([[:space:]]*versionCode[[:space:]]\+\)$current_code\([[:space:]]*\)$/\1$new_code\2/" app/build.gradle
+          sed -i "s/^\([[:space:]]*versionName[[:space:]]\+\)\"$current_name\"\(.*\)$/\1\"$new_name\"\2/" app/build.gradle
+          grep -q "^[[:space:]]*versionCode[[:space:]]\+$new_code$" app/build.gradle
+          grep -q "^[[:space:]]*versionName[[:space:]]\+\"$new_name\"$" app/build.gradle
+
+          {
+            echo "name=$new_name"
+            echo "code=$new_code"
+            echo "apk=FakeLocation_v$new_name.apk"
+          } >> "$GITHUB_OUTPUT"
+          echo "Bumped $current_name ($current_code) -> $new_name ($new_code)"
 
       - name: Decode signing keystore
         env:
@@ -53,20 +112,33 @@ jobs:
           ./gradlew assembleRelease
 
       - name: Verify APK signature
+        env:
+          APK: app/build/outputs/apk/release/${{ steps.version.outputs.apk }}
         run: |
+          test -s "$APK"
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
           test -x "$APKSIGNER"
-          "$APKSIGNER" verify --verbose app/build/outputs/apk/release/FakeLocation_v1.6.7.apk
-          sha256sum app/build/outputs/apk/release/FakeLocation_v1.6.7.apk
+          "$APKSIGNER" verify --verbose "$APK"
+          sha256sum "$APK"
+
+      - name: Commit version bump
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release version $VERSION_NAME"
+          git tag "v$VERSION_NAME"
+          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "v$VERSION_NAME"
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
-          APK: app/build/outputs/apk/release/FakeLocation_v1.6.7.apk
+          TAG: v${{ steps.version.outputs.name }}
+          APK: app/build/outputs/apk/release/${{ steps.version.outputs.apk }}
         run: |
           gh release create "$TAG" "$APK" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
             --title "$TAG" \
             --generate-notes
