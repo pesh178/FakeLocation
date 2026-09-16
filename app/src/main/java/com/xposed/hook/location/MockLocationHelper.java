@@ -39,14 +39,16 @@ public class MockLocationHelper {
         }
     }
 
-    public static void invokeNmeaReceived(Object listener) {
-        invokeNmeaReceived(listener, null);
-    }
-
-    public static void invokeNmeaReceived(Object listener, String packageName) {
-        if (listener == null) return;
+    /**
+     * Sends one NMEA sentence set to {@code listener}.
+     *
+     * @return whether a callback method matching the listener transport was found and called; a
+     * listener that cannot be called reports {@code false} so the dispatch loop can stop.
+     */
+    public static boolean invokeNmeaReceived(Object listener, String packageName) {
+        if (listener == null) return false;
         RefMethod<Void> method = selectMethod(listener);
-        if (method == null) return;
+        if (method == null) return false;
 
         long timestamp = System.currentTimeMillis();
         Date now = new Date(timestamp);
@@ -81,6 +83,7 @@ public class MockLocationHelper {
         callNmeaReceived(method, listener, timestamp, sentence(payload));
 
         callNmeaReceived(method, listener, timestamp, GPGSA_SENTENCE);
+        return true;
     }
 
     private static RefMethod<Void> selectMethod(Object listener) {

@@ -173,16 +173,13 @@ class LocationRuntimeTest {
     /**
      * 读取真实框架私有成员需要 Xposed/LSPosed 的 hidden API 豁免；
      * 纯 AVD 环境可用 `adb shell settings put global hidden_api_policy 1` 放开。
+     *
+     * 能力判定与产品代码一致：`LocationHandler` 在 `sLocationListeners` 与 `mListeners` 之间
+     * 按版本取值，任一可用即可下发，因此两者都不可用时才跳过（否则会在产品可工作的 API 上误跳过）。
      */
     private fun requireFrameworkPrivateAccess() {
-        val allowed = try {
-            val field = Class.forName("android.location.LocationManager")
-                .getDeclaredField("sLocationListeners")
-            field.isAccessible = true
-            field.get(null) != null
-        } catch (_: Throwable) {
-            false
-        }
+        val allowed = com.xposed.hook.location.LocationManager.sLocationListeners != null ||
+            com.xposed.hook.location.LocationManager.mListeners != null
         assumeTrue(
             "需要访问框架私有成员：请使用 Xposed/LSPosed，或执行 adb shell settings put global hidden_api_policy 1",
             allowed

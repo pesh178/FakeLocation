@@ -53,8 +53,12 @@ public class LocationHook {
                     break;
                 }
             }
+            // The framework throws when the request is rejected (permissions, unknown provider,
+            // bad arguments). Registering the listener binding is enough for delivery afterwards,
+            // but the dispatch loop must only start once the request was actually accepted.
+            Object result = chain.proceed();
             LocationHandler.getInstance().start();
-            return chain.proceed();
+            return result;
         });
 
         final Hooker lastLocationHooker = chain -> {

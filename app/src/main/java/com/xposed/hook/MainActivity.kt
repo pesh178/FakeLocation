@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -36,21 +37,24 @@ import androidx.lifecycle.lifecycleScope
 import com.xposed.hook.config.Constants
 import com.xposed.hook.entity.AppInfo
 import com.xposed.hook.extension.dpInPx
-import com.xposed.hook.extension.toBitmap
 import com.xposed.hook.theme.AppTheme
 import com.xposed.hook.utils.AppHelper
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
-    private var appList by mutableStateOf(emptyList<AppInfo>())
+    private var loadJob: Job? = null
     private lateinit var preferences: SharedPreferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureImmersiveStatusBar()
         preferences = getSharedPreferences(Constants.PREF_FILE_NAME, MODE_PRIVATE)
-        setContent { AppScaffold(appList) }
+        setContent {
+            val list by AppHelper.apps.collectAsState()
+            AppScaffold(list)
+        }
     }
 
     private fun configureImmersiveStatusBar() {
@@ -84,9 +88,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        lifecycleScope.launch {
-            appList = AppHelper.getAppList()
-        }
+        // A resumed activity may be re-created faster than a scan finishes; drop the pending one
+        // instead of queueing scans behind each other.
+        loadJob?.cancel()
+        loadJob = lifecycleScope.launch { AppHelper.refresh() }
     }
 
     @Composable
@@ -95,11 +100,10 @@ class MainActivity : AppCompatActivity() {
             mutableStateOf(preferences.getBoolean(Constants.SHOW_SYSTEM_APPS, false))
         }
         var textState by remember { mutableStateOf(TextFieldValue()) }
-        val visibleList = if (showSystemApps) list else list.filterNot { it.isSystem }
-        val filteredList = if (textState.text.isNotEmpty()) {
-            visibleList.filter { it.title.contains(textState.text, true) }
-        } else {
-            visibleList
+        val filteredList = remember(list, showSystemApps, textState.text) {
+            val visibleList = if (showSystemApps) list else list.filterNot { it.isSystem }
+            val query = textState.text
+            if (query.isEmpty()) visibleList else visibleList.filter { it.title.contains(query, true) }
         }
 
         AppTheme {
@@ -175,7 +179,15 @@ class MainActivity : AppCompatActivity() {
                     style = MaterialTheme.typography.subtitle2.copy(color = MaterialTheme.colors.onSurface.copy(alpha = 0.65f)),
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
-                AppList(filteredList, Modifier.weight(1f))
+                Box(modifier = Modifier.weight(1f)) {
+                    AppList(filteredList, Modifier.fillMaxSize())
+                    if (list.isEmpty()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center),
+                            color = MaterialTheme.colors.primary
+                        )
+                    }
+                }
             }
         }
     }
@@ -198,8 +210,9 @@ class MainActivity : AppCompatActivity() {
         var isHookEnabled by remember(item.packageName, item.enabled) {
             mutableStateOf(item.enabled)
         }
-        val icon = remember(item.packageName, item.icon) {
-            item.icon.toBitmap(44.dpInPx, 44.dpInPx)
+        // Icons are decoded off the main thread and only for rows that are actually on screen.
+        val icon by produceState<ImageBitmap?>(null, item.packageName, item.lastUpdateTime) {
+            value = AppHelper.loadIcon(item.packageName, item.lastUpdateTime, 44.dpInPx)
         }
         Surface(
             modifier = Modifier
@@ -215,11 +228,16 @@ class MainActivity : AppCompatActivity() {
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Image(
-                    bitmap = icon,
-                    contentDescription = item.title,
-                    modifier = Modifier.clip(RoundedCornerShape(10.dp))
-                )
+                val bitmap = icon
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = item.title,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                    )
+                } else {
+                    Spacer(modifier = Modifier.size(44.dp))
+                }
                 Column(
                     modifier = Modifier
                         .padding(start = 12.dp)
@@ -239,9 +257,7 @@ class MainActivity : AppCompatActivity() {
                     checked = isHookEnabled,
                     onCheckedChange = { enabled ->
                         isHookEnabled = enabled
-                        item.enabled = enabled
-                        preferences.edit().putBoolean(item.packageName, enabled).apply()
-                        appList = appList.sortedWith(AppHelper.enabledFirstOrder)
+                        lifecycleScope.launch { AppHelper.setEnabled(item.packageName, enabled) }
                     },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = MaterialTheme.colors.primary,

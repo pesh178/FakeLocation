@@ -26,5 +26,6 @@
     <string name="open_location_hook_hint">将此位置应用到选中的应用</string>
     <string name="save">保存</string>
     <string name="save_success">保存成功</string>
+    <string name="invalid_input">纬度需在 -90~90、经度需在 -180~180 之间，区域码与小区标识不能为负数</string>
     <string name="reboot_app">重启App</string>
 </resources>

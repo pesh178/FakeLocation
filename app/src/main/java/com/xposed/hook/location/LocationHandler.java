@@ -65,18 +65,68 @@ public class LocationHandler extends Handler {
         synchronized (loopLock) {
             epoch = registrationEpoch;
         }
+        Object transport = null;
         boolean delivered;
         try {
-            Object transport = ProcessContext.create().getSystemService(Context.LOCATION_SERVICE);
+            transport = ProcessContext.create().getSystemService(Context.LOCATION_SERVICE);
             delivered = notifyNmeaReceived(transport);
             delivered |= notifyLocation(transport);
         } catch (Throwable e) {
-            // Framework internals differ per API level; keep the loop alive so a transient
-            // failure cannot silently stop mocking for the rest of the process lifetime.
+            // Framework internals differ per API level; retry after a transient failure, but only
+            // while a registration still exists. Treating a failure as delivery would keep waking
+            // this process every interval forever after the app unregistered everything.
             Log.d(LocationHook.TAG, e.toString(), e);
-            delivered = true;
+            delivered = hasRegistrations(transport);
         }
         finishCycle(epoch, delivered);
+    }
+
+    /**
+     * @return whether the framework still holds any registration that could receive an update,
+     * mirroring the lookups of {@link #notifyLocation} and {@link #notifyNmeaReceived}.
+     */
+    private boolean hasRegistrations(Object transport) {
+        Map listeners = locationListeners(transport);
+        if (listeners != null && !listeners.isEmpty()) return true;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Object manager = LocationManager.GnssLazyLoader.sGnssNmeaListeners == null
+                        ? null : LocationManager.GnssLazyLoader.sGnssNmeaListeners.get();
+                Map registrations = manager == null || LocationManager.ListenerTransportManager.mRegistrations == null
+                        ? null : LocationManager.ListenerTransportManager.mRegistrations.get(manager);
+                return registrations != null && !registrations.isEmpty();
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Object manager = LocationManager.mGnssStatusListenerManager == null
+                        ? null : LocationManager.mGnssStatusListenerManager.get(transport);
+                return manager != null && LocationManager.GnssStatusListenerManager.mListenerTransport != null
+                        && LocationManager.GnssStatusListenerManager.mListenerTransport.get(manager) != null;
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                return isRegistered(LocationManager.mGnssNmeaListeners, transport)
+                        || isRegistered(LocationManager.mGpsNmeaListeners, transport);
+            } else {
+                return isRegistered(LocationManager.mNmeaListeners, transport);
+            }
+        } catch (Throwable e) {
+            Log.d(LocationHook.TAG, e.toString(), e);
+            return false;
+        }
+    }
+
+    private static boolean isRegistered(mirror.RefObject<Map> holder, Object transport) {
+        if (holder == null) return false;
+        Map listeners = holder.get(transport);
+        return listeners != null && !listeners.isEmpty();
+    }
+
+    /** @return the framework's listener map for {@code transport}, if this API level keeps one. */
+    private static Map locationListeners(Object transport) {
+        if (LocationManager.sLocationListeners != null) {
+            return LocationManager.sLocationListeners.get(transport);
+        }
+        if (LocationManager.mListeners != null) {
+            return LocationManager.mListeners.get(transport);
+        }
+        return null;
     }
 
     /** Starts or keeps the dispatch loop running. Safe to call from any thread. */
@@ -154,12 +204,7 @@ public class LocationHandler extends Handler {
 
     /** @return whether at least one registered listener received an update. */
     private boolean notifyLocation(Object transport) {
-        Map listeners = null;
-        if (LocationManager.sLocationListeners != null) {
-            listeners = LocationManager.sLocationListeners.get(transport);
-        } else if (LocationManager.mListeners != null) {
-            listeners = LocationManager.mListeners.get(transport);
-        }
+        Map listeners = locationListeners(transport);
         if (listeners == null || listeners.isEmpty()) return false;
 
         RefMethod<Void> method = LocationManager.ListenerTransport.onLocationChanged;
@@ -172,17 +217,23 @@ public class LocationHandler extends Handler {
         for (Map.Entry entry : entries) {
             Object value = entry.getValue();
             if (value == null) continue;
+            // Resolve the transport before building the location: a stale weak reference cannot
+            // receive anything, so allocating one for it only adds garbage to every interval.
+            Object target = value;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (!(value instanceof WeakReference)) continue;
+                target = ((WeakReference) value).get();
+                if (target == null) continue;
+            }
             String packageName = LocationConfig.packageForListener(entry.getKey());
-            delivered |= notifyLocation(method, value, createLocation(packageName));
+            delivered |= notifyLocation(method, target, createLocation(packageName));
         }
         return delivered;
     }
 
+    /** @param transport an already dereferenced listener transport. */
     private boolean notifyLocation(RefMethod<Void> method, Object transport, Location location) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (!(transport instanceof WeakReference)) return false;
-            transport = ((WeakReference) transport).get();
-            if (transport == null) return false;
             method.call(transport, Collections.singletonList(location), null);
         } else {
             method.call(transport, location);
@@ -252,8 +303,9 @@ public class LocationHandler extends Handler {
     private boolean notifyNmeaListener(Object object, String packageName) {
         if (object == null) return false;
         try {
-            MockLocationHelper.invokeNmeaReceived(object, packageName);
-            return true;
+            // A listener whose transport has no matching callback method sends nothing, and must
+            // not be reported as delivered: the loop would then never see the process go idle.
+            return MockLocationHelper.invokeNmeaReceived(object, packageName);
         } catch (Throwable e) {
             Log.d(LocationHook.TAG, e.toString(), e);
             return false;

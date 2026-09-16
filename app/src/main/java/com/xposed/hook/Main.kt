@@ -12,9 +12,15 @@ import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 
 internal object CoordinateParser {
     fun parse(value: String?, fallback: String, minimum: Double, maximum: Double): Double {
-        val parsed = value?.toDoubleOrNull()
-        return parsed?.takeIf { it.isFinite() && it in minimum..maximum } ?: fallback.toDouble()
+        return parsed(value, minimum, maximum) ?: fallback.toDouble()
     }
+
+    /** @return whether [value] is a finite number inside the inclusive [minimum]..[maximum] range. */
+    fun isValid(value: String?, minimum: Double, maximum: Double): Boolean =
+        parsed(value, minimum, maximum) != null
+
+    private fun parsed(value: String?, minimum: Double, maximum: Double): Double? =
+        value?.toDoubleOrNull()?.takeIf { it.isFinite() && it in minimum..maximum }
 }
 
 /**

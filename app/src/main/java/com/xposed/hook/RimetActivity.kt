@@ -5,13 +5,13 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.drawable.Drawable
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
 import android.provider.Settings
 import android.telephony.*
 import android.telephony.gsm.GsmCellLocation
@@ -36,6 +36,7 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -48,9 +49,12 @@ import com.xposed.hook.config.Constants
 import com.xposed.hook.config.PkgConfig
 import com.xposed.hook.entity.AppInfo
 import com.xposed.hook.extension.dpInPx
-import com.xposed.hook.extension.toBitmap
 import com.xposed.hook.theme.AppTheme
+import com.xposed.hook.utils.AppHelper
 import com.xposed.hook.utils.CellLocationHelper
+
+/** Continuous refresh interval of the current-position readout. */
+private const val REFRESH_INTERVAL_MS = 5000L
 
 internal object LocationProviderSelector {
     fun orderedProviders(providers: List<String>): List<String> {
@@ -60,6 +64,25 @@ internal object LocationProviderSelector {
             LocationManager.PASSIVE_PROVIDER
         )
         return (preferredProviders + providers).distinct().filter { it in providers }
+    }
+
+    /**
+     * Providers worth holding a continuous request on: the two standard providers plus passive,
+     * which only receives locations other apps already requested. Vendor providers are dropped so
+     * the settings page does not keep a second positioning stack (for example a fused provider)
+     * awake for as long as it is open — unless no standard provider is enabled at all, in which
+     * case the best available one is kept so the readout still works.
+     */
+    fun activeProviders(providers: List<String>): List<String> {
+        val ordered = orderedProviders(providers)
+        val standard = ordered.filter {
+            it == LocationManager.GPS_PROVIDER ||
+                it == LocationManager.NETWORK_PROVIDER ||
+                it == LocationManager.PASSIVE_PROVIDER
+        }
+        if (standard.any { it != LocationManager.PASSIVE_PROVIDER }) return standard
+        val fallback = ordered.firstOrNull()?.takeIf { it !in standard }
+        return if (fallback == null) standard else listOf(fallback) + standard
     }
 }
 
@@ -86,7 +109,6 @@ class RimetActivity : AppCompatActivity() {
 
     private lateinit var sp: SharedPreferences
     private lateinit var appInfo: AppInfo
-    private var appIcon: Drawable? = null
     private var isDingTalk = false
 
     private lateinit var tm: TelephonyManager
@@ -94,6 +116,7 @@ class RimetActivity : AppCompatActivity() {
     private var locationStarted = false
     private var cellListenerStarted = false
     private var locationGeneration = 0
+    private var currentLocationRequest: CancellationSignal? = null
 
     private val _currentLatitude = MutableLiveData("")
     private val _currentLongitude = MutableLiveData("")
@@ -103,11 +126,15 @@ class RimetActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureImmersiveStatusBar()
-        appInfo = intent.getSerializableExtra("appInfo") as? AppInfo ?: return
+        val info = intent.getSerializableExtra("appInfo") as? AppInfo
+        if (info == null) {
+            // Nothing to configure; an empty window would only be a dead end.
+            finish()
+            return
+        }
+        appInfo = info
         title = appInfo.title
         isDingTalk = PkgConfig.pkg_dingtalk == appInfo.packageName
-        // AppInfo.icon 是 transient 字段，跨进程传递后为空，按包名重新读取。
-        appIcon = runCatching { packageManager.getApplicationIcon(appInfo.packageName) }.getOrNull()
         tm = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
         lm = getSystemService(LOCATION_SERVICE) as LocationManager
         sp = getSharedPreferences(Constants.PREF_FILE_NAME, MODE_PRIVATE)
@@ -317,19 +344,33 @@ class RimetActivity : AppCompatActivity() {
                 ) {
                     Button(
                         onClick = {
-                            sp.edit()
-                                .putString(prefix + "latitude", latitude)
-                                .putString(prefix + "longitude", longitude)
-                                .putLong(prefix + "lac", parseLong(lac))
-                                .putLong(prefix + "cid", parseLong(cid))
-                                .putLong(prefix + "time", System.currentTimeMillis())
-                                .putBoolean(appInfo.packageName, isChecked)
-                                .apply()
-                            Toast.makeText(
-                                applicationContext,
-                                R.string.save_success,
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            // The module silently falls back to its defaults for unusable values, so
+                            // saving one would report success while hooking a different position.
+                            val invalid = isCoordinateInvalid(latitude, -90.0, 90.0) ||
+                                isCoordinateInvalid(longitude, -180.0, 180.0) ||
+                                isCellValueInvalid(lac) ||
+                                isCellValueInvalid(cid)
+                            if (invalid) {
+                                Toast.makeText(
+                                    applicationContext,
+                                    R.string.invalid_input,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                sp.edit()
+                                    .putString(prefix + "latitude", latitude)
+                                    .putString(prefix + "longitude", longitude)
+                                    .putLong(prefix + "lac", parseLong(lac))
+                                    .putLong(prefix + "cid", parseLong(cid))
+                                    .putLong(prefix + "time", System.currentTimeMillis())
+                                    .putBoolean(appInfo.packageName, isChecked)
+                                    .apply()
+                                Toast.makeText(
+                                    applicationContext,
+                                    R.string.save_success,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
@@ -376,9 +417,13 @@ class RimetActivity : AppCompatActivity() {
                     contentDescription = stringResource(R.string.back)
                 )
             }
-            val icon = appIcon
-            if (icon != null) {
-                val bitmap = remember(icon) { icon.toBitmap(48.dpInPx, 48.dpInPx) }
+            // The list already decoded this icon; reuse its cache instead of touching the
+            // PackageManager on the main thread while the header composes.
+            val icon by produceState<ImageBitmap?>(null, appInfo.packageName, appInfo.lastUpdateTime) {
+                value = AppHelper.loadIcon(appInfo.packageName, appInfo.lastUpdateTime, 48.dpInPx)
+            }
+            val bitmap = icon
+            if (bitmap != null) {
                 Image(
                     bitmap = bitmap,
                     contentDescription = appInfo.title,
@@ -480,6 +525,13 @@ class RimetActivity : AppCompatActivity() {
         return str.toLongOrNull() ?: -1L
     }
 
+    /** An empty field means "keep the built-in default"; anything else must be a usable value. */
+    private fun isCoordinateInvalid(value: String, minimum: Double, maximum: Double): Boolean =
+        value.isNotEmpty() && !CoordinateParser.isValid(value, minimum, maximum)
+
+    private fun isCellValueInvalid(value: String): Boolean =
+        value.isNotEmpty() && parseLong(value) < 0
+
     private var listener: PhoneStateListener = object : PhoneStateListener() {
         override fun onCellLocationChanged(location: CellLocation) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return
@@ -491,40 +543,45 @@ class RimetActivity : AppCompatActivity() {
 
         override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>?) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-            val cellIdentity = cellInfo?.firstOrNull()?.cellIdentity ?: return
-            when (cellIdentity) {
-                is CellIdentityGsm -> {
-                    _currentLac.value = cellIdentity.lac.toString()
-                    _currentCid.value = cellIdentity.cid.toString()
-                }
-                is CellIdentityWcdma -> {
-                    _currentLac.value = cellIdentity.lac.toString()
-                    _currentCid.value = cellIdentity.cid.toString()
-                }
-                is CellIdentityTdscdma -> {
-                    _currentLac.value = cellIdentity.lac.toString()
-                    _currentCid.value = cellIdentity.cid.toString()
-                }
-                is CellIdentityLte -> {
-                    _currentLac.value = cellIdentity.tac.toString()
-                    _currentCid.value = cellIdentity.ci.toString()
-                }
-                is CellIdentityNr -> {
-                    _currentLac.value = cellIdentity.tac.toString()
-                    _currentCid.value = cellIdentity.nci.toString()
-                }
-            }
+            val cells = cellInfo ?: return
+            // Neighbour cells share this list, and an unsupported or unavailable identity would
+            // otherwise be shown (and saved) as the current cell. Prefer the registered cell.
+            val cell = cells.filter { it.isRegistered }.firstNotNullOfOrNull(::cellOf)
+                ?: cells.firstNotNullOfOrNull(::cellOf)
+                ?: return
+            _currentLac.value = cell.first.toString()
+            _currentCid.value = cell.second.toString()
         }
+    }
+
+    /** @return the (area code, cell identity) pair a usable identity reports, or null. */
+    private fun cellOf(info: CellInfo): Pair<Long, Long>? {
+        return when (val identity = info.cellIdentity) {
+            is CellIdentityGsm -> cellPair(identity.lac, identity.cid)
+            is CellIdentityWcdma -> cellPair(identity.lac, identity.cid)
+            is CellIdentityTdscdma -> cellPair(identity.lac, identity.cid)
+            is CellIdentityLte -> cellPair(identity.tac, identity.ci)
+            is CellIdentityNr -> if (identity.tac == CellInfo.UNAVAILABLE ||
+                identity.nci == CellInfo.UNAVAILABLE.toLong()
+            ) {
+                null
+            } else {
+                identity.tac.toLong() to identity.nci
+            }
+            else -> null
+        }
+    }
+
+    private fun cellPair(lac: Int, cid: Int): Pair<Long, Long>? {
+        if (lac == CellInfo.UNAVAILABLE || cid == CellInfo.UNAVAILABLE) return null
+        return lac.toLong() to cid.toLong()
     }
 
     private var currentLocation: Location? = null
 
     private var gpsListener: LocationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            if (CurrentLocationSelector.shouldReplace(currentLocation, location)) {
-                currentLocation = location
-                updateCurrentLocation(location)
-            }
+            acceptLocation(location)
         }
 
         override fun onStatusChanged(provider: String, status: Int, extras: Bundle) {}
@@ -539,9 +596,11 @@ class RimetActivity : AppCompatActivity() {
 
     private fun requestPermissions() {
         val permissions = mutableListOf<String>()
-        if (!hasLocationPermission()) {
-            permissions += Manifest.permission.ACCESS_COARSE_LOCATION
+        // Cell identity needs FINE, so a COARSE-only grant has to be upgraded: otherwise the cell
+        // section stays empty forever with no way to fix it from this page.
+        if (!hasFineLocationPermission()) {
             permissions += Manifest.permission.ACCESS_FINE_LOCATION
+            permissions += Manifest.permission.ACCESS_COARSE_LOCATION
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !hasPhoneStatePermission()) {
             permissions += Manifest.permission.READ_PHONE_STATE
@@ -597,22 +656,25 @@ class RimetActivity : AppCompatActivity() {
         if (!locationStarted) {
             locationStarted = true
             val generation = ++locationGeneration
-            val providers = LocationProviderSelector.orderedProviders(lm.getProviders(true))
-            for (provider in providers) {
-                lm.getLastKnownLocation(provider)?.let { location ->
-                    if (CurrentLocationSelector.shouldReplace(currentLocation, location)) {
-                        currentLocation = location
-                        updateCurrentLocation(location)
-                    }
-                }
-                lm.requestLocationUpdates(provider, 5000L, 0f, gpsListener, mainLooper)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && provider != LocationManager.PASSIVE_PROVIDER) {
-                    lm.getCurrentLocation(provider, null, mainExecutor) { location ->
-                        if (locationStarted && generation == locationGeneration && location != null &&
-                            CurrentLocationSelector.shouldReplace(currentLocation, location)
-                        ) {
-                            currentLocation = location
-                            updateCurrentLocation(location)
+            val enabledProviders = lm.getProviders(true)
+            // The cached fix of any provider is free to read, so try them all before requesting.
+            for (provider in enabledProviders) {
+                lm.getLastKnownLocation(provider)?.let(::acceptLocation)
+            }
+            for (provider in LocationProviderSelector.activeProviders(enabledProviders)) {
+                lm.requestLocationUpdates(provider, REFRESH_INTERVAL_MS, 0f, gpsListener, mainLooper)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val provider = LocationProviderSelector.activeProviders(enabledProviders)
+                    .firstOrNull { it != LocationManager.PASSIVE_PROVIDER }
+                if (provider != null) {
+                    // A one-shot request ending in the first fix; cancelled in stopLocation so that
+                    // leaving the page cannot leave a running request behind.
+                    val signal = CancellationSignal()
+                    currentLocationRequest = signal
+                    lm.getCurrentLocation(provider, signal, mainExecutor) { location ->
+                        if (locationStarted && generation == locationGeneration) {
+                            location?.let(::acceptLocation)
                         }
                     }
                 }
@@ -628,10 +690,20 @@ class RimetActivity : AppCompatActivity() {
         }
     }
 
+    /** Keeps the newest fix of the enabled providers, whatever its source. */
+    private fun acceptLocation(location: Location) {
+        if (CurrentLocationSelector.shouldReplace(currentLocation, location)) {
+            currentLocation = location
+            updateCurrentLocation(location)
+        }
+    }
+
     private fun stopLocation() {
         locationGeneration++
         if (!locationStarted && !cellListenerStarted) return
         locationStarted = false
+        currentLocationRequest?.cancel()
+        currentLocationRequest = null
         if (::tm.isInitialized && cellListenerStarted) {
             tm.listen(listener, PhoneStateListener.LISTEN_NONE)
             cellListenerStarted = false

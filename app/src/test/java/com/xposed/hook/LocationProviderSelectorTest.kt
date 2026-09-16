@@ -1,6 +1,8 @@
 package com.xposed.hook
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LocationProviderSelectorTest {
@@ -22,10 +24,34 @@ class LocationProviderSelectorTest {
     }
 
     @Test
+    fun activeProviders_keepsStandardProvidersAndDropsVendorStacks() {
+        assertEquals(
+            listOf("gps", "network", "passive"),
+            LocationProviderSelector.activeProviders(listOf("fused", "network", "gps", "passive"))
+        )
+    }
+
+    @Test
+    fun activeProviders_keepsVendorProviderWhenNoStandardProviderIsEnabled() {
+        assertEquals(listOf("fused"), LocationProviderSelector.activeProviders(listOf("fused")))
+    }
+
+    @Test
     fun coordinateParser_rejectsInvalidAndOutOfRangeValues() {
         assertEquals(34.7526, CoordinateParser.parse("invalid", "34.7526", -90.0, 90.0), 0.0)
         assertEquals(113.662, CoordinateParser.parse("181", "113.662", -180.0, 180.0), 0.0)
         assertEquals(-12.5, CoordinateParser.parse("-12.5", "0", -90.0, 90.0), 0.0)
+    }
+
+    @Test
+    fun coordinateParser_validityMatchesSaveValidation() {
+        assertTrue(CoordinateParser.isValid("34.7526", -90.0, 90.0))
+        assertTrue(CoordinateParser.isValid("-180", -180.0, 180.0))
+        assertFalse(CoordinateParser.isValid("90.0001", -90.0, 90.0))
+        assertFalse(CoordinateParser.isValid("NaN", -90.0, 90.0))
+        assertFalse(CoordinateParser.isValid("Infinity", -180.0, 180.0))
+        assertFalse(CoordinateParser.isValid("", -90.0, 90.0))
+        assertFalse(CoordinateParser.isValid(null, -90.0, 90.0))
     }
 
     @Test
